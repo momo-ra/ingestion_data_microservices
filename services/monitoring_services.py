@@ -10,6 +10,10 @@ import time
 from datetime import datetime, timedelta
 from utils.log import setup_logger
 from services.opc_ua_services import get_opc_ua_client
+from services.scheduler_services import SchedulerService
+from services.polling_services import get_polling_service
+from services.subscription_services import get_subscription_service
+from utils.metrics import get_metrics
 
 logger = setup_logger(__name__)
 
@@ -50,6 +54,9 @@ class MonitoringService:
                 "metrics": {}
             }
         }
+        self.scheduler = SchedulerService.get_instance()
+        self.polling_service = get_polling_service()
+        self.subscription_service = get_subscription_service()
         
     async def start_monitoring(self):
         """Start the monitoring task"""
@@ -329,4 +336,156 @@ class MonitoringService:
             "status": overall_status,
             "timestamp": datetime.now().isoformat(),
             "components": self.health_status
-        } 
+        }
+
+    async def clear_all_scheduled_tasks(self):
+        """Clear all scheduled tasks from all services
+        
+        Returns:
+            dict: Comprehensive information about all cleared tasks
+        """
+        try:
+            logger.info("Starting to clear all scheduled tasks...")
+            
+            # Clear scheduler jobs
+            scheduler_result = self.scheduler.clear_all_jobs()
+            
+            # Clear polling tasks
+            polling_result = await self.polling_service.clear_all_polling_tasks()
+            
+            # Clear subscription tasks
+            subscription_result = await self.subscription_service.clear_all_subscriptions()
+            
+            # Calculate totals
+            total_jobs = scheduler_result.get("job_count", 0)
+            total_polling = polling_result.get("task_count", 0)
+            total_subscriptions = subscription_result.get("subscription_count", 0)
+            total_tasks = total_jobs + total_polling + total_subscriptions
+            
+            # Check if all operations were successful
+            all_successful = (
+                scheduler_result.get("success", False) and
+                polling_result.get("success", False) and
+                subscription_result.get("success", False)
+            )
+            
+            result = {
+                "success": all_successful,
+                "message": f"Cleared {total_tasks} total scheduled tasks",
+                "timestamp": datetime.now().isoformat(),
+                "summary": {
+                    "total_tasks": total_tasks,
+                    "scheduler_jobs": total_jobs,
+                    "polling_tasks": total_polling,
+                    "subscription_tasks": total_subscriptions
+                },
+                "details": {
+                    "scheduler": scheduler_result,
+                    "polling": polling_result,
+                    "subscriptions": subscription_result
+                }
+            }
+            
+            if all_successful:
+                logger.info(f"Successfully cleared all {total_tasks} scheduled tasks")
+            else:
+                logger.warning(f"Partially cleared {total_tasks} scheduled tasks with some errors")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error clearing all scheduled tasks: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "message": f"Error clearing scheduled tasks: {e}",
+                "timestamp": datetime.now().isoformat(),
+                "summary": {
+                    "total_tasks": 0,
+                    "scheduler_jobs": 0,
+                    "polling_tasks": 0,
+                    "subscription_tasks": 0
+                },
+                "details": {
+                    "scheduler": {"success": False, "message": str(e)},
+                    "polling": {"success": False, "message": str(e)},
+                    "subscriptions": {"success": False, "message": str(e)}
+                }
+            }
+
+    async def clear_all_scheduled_tasks_permanent(self):
+        """Permanently clear all scheduled tasks from all services (delete from database)
+        
+        Returns:
+            dict: Comprehensive information about all cleared tasks
+        """
+        try:
+            logger.info("Starting to permanently clear all scheduled tasks...")
+            
+            # Permanently clear scheduler jobs (including database file)
+            scheduler_result = self.scheduler.clear_all_jobs_permanent()
+            
+            # Permanently clear polling tasks
+            polling_result = await self.polling_service.clear_all_polling_tasks_permanent()
+            
+            # Permanently clear subscription tasks
+            subscription_result = await self.subscription_service.clear_all_subscriptions_permanent()
+            
+            # Calculate totals
+            total_jobs = scheduler_result.get("job_count", 0)
+            total_polling = polling_result.get("task_count", 0)
+            total_subscriptions = subscription_result.get("subscription_count", 0)
+            total_tasks = total_jobs + total_polling + total_subscriptions
+            
+            # Check if all operations were successful
+            all_successful = (
+                scheduler_result.get("success", False) and
+                polling_result.get("success", False) and
+                subscription_result.get("success", False)
+            )
+            
+            result = {
+                "success": all_successful,
+                "message": f"Permanently cleared {total_tasks} total scheduled tasks",
+                "timestamp": datetime.now().isoformat(),
+                "summary": {
+                    "total_tasks": total_tasks,
+                    "scheduler_jobs": total_jobs,
+                    "polling_tasks": total_polling,
+                    "subscription_tasks": total_subscriptions
+                },
+                "details": {
+                    "scheduler": scheduler_result,
+                    "polling": polling_result,
+                    "subscriptions": subscription_result
+                }
+            }
+            
+            if all_successful:
+                logger.info(f"Successfully permanently cleared all {total_tasks} scheduled tasks")
+            else:
+                logger.warning(f"Partially permanently cleared {total_tasks} scheduled tasks with some errors")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error permanently clearing all scheduled tasks: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "message": f"Error permanently clearing scheduled tasks: {e}",
+                "timestamp": datetime.now().isoformat(),
+                "summary": {
+                    "total_tasks": 0,
+                    "scheduler_jobs": 0,
+                    "polling_tasks": 0,
+                    "subscription_tasks": 0
+                },
+                "details": {
+                    "scheduler": {"success": False, "message": str(e)},
+                    "polling": {"success": False, "message": str(e)},
+                    "subscriptions": {"success": False, "message": str(e)}
+                }
+            } 

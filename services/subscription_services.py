@@ -4,7 +4,7 @@ from utils.metrics import subscription_count
 from services.opc_ua_services import get_opc_ua_client
 from services.kafka_services import kafka_service
 from queries.timeseries_queries import save_node_data_to_db
-from queries.subscription_queries import save_subscription_task, deactivate_subscription_task, get_active_subscription_tasks, get_or_create_tag_id
+from queries.subscription_queries import save_subscription_task, deactivate_subscription_task, get_active_subscription_tasks, get_or_create_tag_id, delete_subscription_task
 from datetime import datetime
 from schemas.schema import TagSchema, TimeSeriesSchema
 
@@ -327,4 +327,134 @@ class SubscriptionService:
             raise SubscriptionError(
                 message=f"Failed to process data change: {e}",
                 error_code="DATA_CHANGE_PROCESS_ERROR"
-            ) 
+            )
+
+    @with_async_correlation_id
+    @handle_async_errors(error_class=SubscriptionError, default_message="Error clearing all subscriptions")
+    async def clear_all_subscriptions(self):
+        """Clear all subscription tasks from memory and database
+        
+        Returns:
+            dict: Information about the cleared subscription tasks
+        """
+        try:
+            # Get all subscription node IDs before clearing
+            node_ids = list(self.subscription_handles.keys())
+            subscription_count = len(node_ids)
+            
+            if subscription_count == 0:
+                logger.info("No subscription tasks to clear")
+                return {
+                    "success": True,
+                    "message": "No subscription tasks to clear",
+                    "cleared_subscriptions": [],
+                    "subscription_count": 0
+                }
+            
+            # Remove all subscription tasks
+            cleared_subscriptions = []
+            for node_id in node_ids:
+                try:
+                    # Get the server handle for this node_id
+                    server_handle = self.subscription_handles[node_id]
+                    
+                    # Unsubscribe using the server handle
+                    await self.subscription.unsubscribe(server_handle)
+                    
+                    # Deactivate subscription in database
+                    await deactivate_subscription_task(node_id)
+                    
+                    cleared_subscriptions.append(node_id)
+                    logger.info(f"Cleared subscription for node {node_id}")
+                except Exception as e:
+                    logger.error(f"Error clearing subscription for node {node_id}: {e}")
+            
+            # Clear the subscription_handles dictionary
+            self.subscription_handles.clear()
+            
+            # Update metrics
+            subscription_count.set(0)
+            
+            logger.info(f"Cleared all {subscription_count} subscription tasks")
+            
+            return {
+                "success": True,
+                "message": f"Successfully cleared {subscription_count} subscription tasks",
+                "cleared_subscriptions": cleared_subscriptions,
+                "subscription_count": subscription_count
+            }
+        except Exception as e:
+            logger.error(f"Error clearing all subscription tasks: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "message": f"Error clearing subscription tasks: {e}",
+                "cleared_subscriptions": [],
+                "subscription_count": 0
+            }
+
+    @with_async_correlation_id
+    @handle_async_errors(error_class=SubscriptionError, default_message="Error permanently clearing all subscriptions")
+    async def clear_all_subscriptions_permanent(self):
+        """Permanently clear all subscription tasks from memory and database (delete records)
+        
+        Returns:
+            dict: Information about the cleared subscription tasks
+        """
+        try:
+            # Get all subscription node IDs before clearing
+            node_ids = list(self.subscription_handles.keys())
+            subscription_count = len(node_ids)
+            
+            if subscription_count == 0:
+                logger.info("No subscription tasks to permanently clear")
+                return {
+                    "success": True,
+                    "message": "No subscription tasks to permanently clear",
+                    "cleared_subscriptions": [],
+                    "subscription_count": 0
+                }
+            
+            # Remove all subscription tasks
+            cleared_subscriptions = []
+            for node_id in node_ids:
+                try:
+                    # Get the server handle for this node_id
+                    server_handle = self.subscription_handles[node_id]
+                    
+                    # Unsubscribe using the server handle
+                    await self.subscription.unsubscribe(server_handle)
+                    
+                    # Permanently delete subscription from database
+                    await delete_subscription_task(node_id)
+                    
+                    cleared_subscriptions.append(node_id)
+                    logger.info(f"Permanently cleared subscription for node {node_id}")
+                except Exception as e:
+                    logger.error(f"Error permanently clearing subscription for node {node_id}: {e}")
+            
+            # Clear the subscription_handles dictionary
+            self.subscription_handles.clear()
+            
+            # Update metrics
+            subscription_count.set(0)
+            
+            logger.info(f"Permanently cleared all {subscription_count} subscription tasks")
+            
+            return {
+                "success": True,
+                "message": f"Successfully permanently cleared {subscription_count} subscription tasks",
+                "cleared_subscriptions": cleared_subscriptions,
+                "subscription_count": subscription_count
+            }
+        except Exception as e:
+            logger.error(f"Error permanently clearing all subscription tasks: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "message": f"Error permanently clearing subscription tasks: {e}",
+                "cleared_subscriptions": [],
+                "subscription_count": 0
+            } 

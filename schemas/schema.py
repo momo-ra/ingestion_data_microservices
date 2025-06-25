@@ -51,5 +51,12 @@ class TimeRangeRequest(BaseModel):
     end_time: Optional[datetime] = None
     limit: Optional[int] = 100
 
+class ClearTasksResponse(BaseModel):
+    success: bool
+    message: str
+    timestamp: str
+    summary: dict
+    details: dict
+
     
     

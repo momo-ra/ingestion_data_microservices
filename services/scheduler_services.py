@@ -164,3 +164,120 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"Error resuming job: id={job_id}: {e}")
             return False
+
+    def clear_all_jobs(self):
+        """Clear all jobs from the scheduler
+        
+        Returns:
+            dict: Information about the cleared jobs
+        """
+        try:
+            # Get all job IDs before clearing
+            job_ids = list(self.jobs.keys())
+            job_count = len(job_ids)
+            
+            if job_count == 0:
+                logger.info("No jobs to clear")
+                return {
+                    "success": True,
+                    "message": "No jobs to clear",
+                    "cleared_jobs": [],
+                    "job_count": 0
+                }
+            
+            # Remove all jobs from the scheduler
+            for job_id in job_ids:
+                try:
+                    self.scheduler.remove_job(job_id)
+                    logger.info(f"Removed job: id={job_id}")
+                except Exception as e:
+                    logger.error(f"Error removing job: id={job_id}: {e}")
+            
+            # Clear the jobs dictionary
+            cleared_jobs = self.jobs.copy()
+            self.jobs.clear()
+            
+            logger.info(f"Cleared all {job_count} scheduled jobs")
+            
+            return {
+                "success": True,
+                "message": f"Successfully cleared {job_count} scheduled jobs",
+                "cleared_jobs": list(cleared_jobs.keys()),
+                "job_count": job_count
+            }
+        except Exception as e:
+            logger.error(f"Error clearing all jobs: {e}")
+            return {
+                "success": False,
+                "message": f"Error clearing jobs: {e}",
+                "cleared_jobs": [],
+                "job_count": 0
+            }
+
+    def clear_all_jobs_permanent(self):
+        """Clear all jobs from the scheduler and the database file
+        
+        Returns:
+            dict: Information about the cleared jobs
+        """
+        try:
+            # Get all jobs from the scheduler (not just from our dictionary)
+            all_jobs = self.scheduler.get_jobs()
+            job_count = len(all_jobs)
+            
+            if job_count == 0:
+                logger.info("No jobs to clear")
+                return {
+                    "success": True,
+                    "message": "No jobs to clear",
+                    "cleared_jobs": [],
+                    "job_count": 0
+                }
+            
+            # Get job IDs
+            job_ids = [job.id for job in all_jobs]
+            
+            # Remove all jobs from the scheduler
+            for job_id in job_ids:
+                try:
+                    self.scheduler.remove_job(job_id)
+                    logger.info(f"Removed job: id={job_id}")
+                except Exception as e:
+                    logger.error(f"Error removing job: id={job_id}: {e}")
+            
+            # Clear our jobs dictionary
+            self.jobs.clear()
+            
+            # Clear the APScheduler database file
+            try:
+                import os
+                if os.path.exists('jobs.sqlite'):
+                    # Remove the database file to clear all persistent jobs
+                    os.remove('jobs.sqlite')
+                    logger.info("Removed APScheduler database file (jobs.sqlite)")
+                    
+                    # Reinitialize the scheduler with a new database
+                    jobstores = {
+                        'default': SQLAlchemyJobStore(url='sqlite:///jobs.sqlite')
+                    }
+                    self.scheduler = AsyncIOScheduler(jobstores=jobstores)
+                    logger.info("Reinitialized scheduler with new database")
+            except Exception as e:
+                logger.error(f"Error clearing APScheduler database: {e}")
+            
+            logger.info(f"Permanently cleared all {job_count} scheduled jobs")
+            
+            return {
+                "success": True,
+                "message": f"Successfully permanently cleared {job_count} scheduled jobs",
+                "cleared_jobs": job_ids,
+                "job_count": job_count
+            }
+        except Exception as e:
+            logger.error(f"Error permanently clearing all jobs: {e}")
+            return {
+                "success": False,
+                "message": f"Error permanently clearing jobs: {e}",
+                "cleared_jobs": [],
+                "job_count": 0
+            }

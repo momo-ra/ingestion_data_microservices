@@ -293,3 +293,90 @@ async def get_or_create_tag_id(node_id):
         else:
             logger.warning(f"Node {node_id} does not exist in OPC UA server, cannot create tag")
             return None
+
+async def delete_polling_task(node_id, interval_seconds=None):
+    """Permanently delete a polling task from the database
+    
+    Args:
+        node_id (str): The node ID
+        interval_seconds (int, optional): The polling interval in seconds. If None, delete all tasks for this node.
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Use node_id directly as tag_name without parsing
+        tag_name = node_id
+        
+        # Also try to get results using any extracted tag name (for backward compatibility)
+        alternate_tag_names = []
+        
+        # Extract tag name from node_id if it has a specific format
+        parts = node_id.split(';')
+        if len(parts) > 1:
+            try:
+                extracted_tag = parts[1].split('=')[1]
+                if extracted_tag != tag_name:
+                    alternate_tag_names.append(extracted_tag)
+            except (IndexError, ValueError):
+                # If parsing fails, just continue with the original tag_name
+                pass
+                
+        # Log what we're trying to delete
+        if interval_seconds is None:
+            logger.info(f"Attempting to delete all polling tasks for node {node_id} (tag names: {[tag_name] + alternate_tag_names})")
+        else:
+            logger.info(f"Attempting to delete polling task for node {node_id} with interval {interval_seconds}s (tag names: {[tag_name] + alternate_tag_names})")
+            
+        # Get tag_ids for all possible tag names
+        tag_ids = []
+        primary_tag_id = await get_or_create_tag_id(tag_name)
+        if primary_tag_id:
+            tag_ids.append(primary_tag_id)
+            
+        for alt_tag in alternate_tag_names:
+            alt_tag_id = await get_or_create_tag_id(alt_tag)
+            if alt_tag_id and alt_tag_id not in tag_ids:
+                tag_ids.append(alt_tag_id)
+                
+        if not tag_ids:
+            logger.warning(f"No tags found for node {node_id}")
+            return False
+            
+        # Use all possible tag IDs to ensure we find and delete the task
+        success = False
+        async with async_session() as session:
+            for tag_id in tag_ids:
+                if interval_seconds is None:
+                    # Delete all tasks for this tag
+                    query = (
+                        delete(polling_tasks)
+                        .where(polling_tasks.tag_id == tag_id)
+                    )
+                else:
+                    # Delete specific task
+                    query = (
+                        delete(polling_tasks)
+                        .where(
+                            (polling_tasks.tag_id == tag_id) & 
+                            (polling_tasks.time_interval == interval_seconds)
+                        )
+                    )
+                
+                result = await session.execute(query)
+                await session.commit()
+                
+                if result.rowcount > 0:
+                    logger.info(f"Deleted {result.rowcount} polling task(s) for tag_id {tag_id}")
+                    success = True
+            
+        if success:
+            return True
+        else:
+            logger.warning(f"No polling tasks found for node {node_id} with any of the tag IDs: {tag_ids}")
+            return False
+    except Exception as e:
+        logger.error(f"Error deleting polling task for node {node_id}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False

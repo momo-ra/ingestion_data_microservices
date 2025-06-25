@@ -10,7 +10,7 @@ from services.monitoring_services import MonitoringService
 from datetime import datetime, timedelta
 import time
 from queries.subscription_queries import get_active_subscription_tasks
-from schemas.schema import NodeRequest, PollingRequest, TimeRangeRequest, PollingResponse
+from schemas.schema import NodeRequest, PollingRequest, TimeRangeRequest, PollingResponse, ClearTasksResponse
 
 router = APIRouter()
 logger = setup_logger(__name__)
@@ -339,29 +339,92 @@ async def get_health():
 
 @router.get("/health/detailed")
 async def get_detailed_health():
-    """Get detailed health status with metrics for all components"""
+    """Get detailed health status of all components"""
     try:
         monitoring_service = MonitoringService.get_instance()
-        health_status = monitoring_service.get_health_status()
-        
-        # Add additional system information
-        import psutil
-        import platform
-        
-        system_info = {
-            "cpu_percent": psutil.cpu_percent(),
-            "memory_percent": psutil.virtual_memory().percent,
-            "disk_percent": psutil.disk_usage('/').percent,
-            "python_version": platform.python_version(),
-            "platform": platform.platform(),
-            "process_uptime": time.time() - psutil.Process().create_time()
-        }
-        
-        health_status["system_info"] = system_info
+        health_status = await monitoring_service.get_detailed_health()
         return health_status
     except Exception as e:
-        logger.error(f"Error getting detailed health status: {e}")
+        logger.error(f"Error getting detailed health: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/tasks/clear-all", response_model=ClearTasksResponse)
+async def clear_all_scheduled_tasks():
+    """Clear all scheduled tasks (scheduler jobs, polling tasks, and subscriptions)"""
+    try:
+        monitoring_service = MonitoringService.get_instance()
+        result = await monitoring_service.clear_all_scheduled_tasks()
+        
+        if result.get("success", False):
+            return ClearTasksResponse(**result)
+        else:
+            raise HTTPException(status_code=500, detail=result.get("message", "Failed to clear scheduled tasks"))
+    except Exception as e:
+        logger.error(f"Error clearing all scheduled tasks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/tasks/clear-all-permanent", response_model=ClearTasksResponse)
+async def clear_all_scheduled_tasks_permanent():
+    """Permanently clear all scheduled tasks (delete from database) - USE WITH CAUTION"""
+    try:
+        monitoring_service = MonitoringService.get_instance()
+        result = await monitoring_service.clear_all_scheduled_tasks_permanent()
+        
+        if result.get("success", False):
+            return ClearTasksResponse(**result)
+        else:
+            raise HTTPException(status_code=500, detail=result.get("message", "Failed to permanently clear scheduled tasks"))
+    except Exception as e:
+        logger.error(f"Error permanently clearing all scheduled tasks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tasks/debug")
+async def debug_tasks():
+    """Debug endpoint to check what tasks are currently running"""
+    try:
+        from services.scheduler_services import SchedulerService
+        from services.polling_services import get_polling_service
+        from services.subscription_services import get_subscription_service
+        
+        scheduler = SchedulerService.get_instance()
+        polling_service = get_polling_service()
+        subscription_service = get_subscription_service()
+        
+        # Get scheduler jobs
+        scheduler_jobs = scheduler.get_all_jobs()
+        
+        # Get polling tasks from memory
+        polling_tasks = polling_service.polling_tasks
+        
+        # Get subscription handles
+        subscription_handles = subscription_service.subscription_handles
+        
+        # Get active tasks from database
+        db_polling_tasks = await get_active_polling_tasks()
+        db_subscription_tasks = await get_active_subscription_tasks()
+        
         return {
-            "status": "error",
-            "message": f"Error getting detailed health status: {str(e)}"
+            "scheduler_jobs": {
+                "count": len(scheduler_jobs),
+                "jobs": list(scheduler_jobs.keys())
+            },
+            "polling_tasks_memory": {
+                "count": len(polling_tasks),
+                "tasks": list(polling_tasks.keys())
+            },
+            "subscription_handles_memory": {
+                "count": len(subscription_handles),
+                "handles": list(subscription_handles.keys())
+            },
+            "db_polling_tasks": {
+                "count": len(db_polling_tasks),
+                "tasks": [task["tag_name"] for task in db_polling_tasks]
+            },
+            "db_subscription_tasks": {
+                "count": len(db_subscription_tasks),
+                "tasks": [task["tag_name"] for task in db_subscription_tasks]
+            }
         }
+    except Exception as e:
+        logger.error(f"Error in debug tasks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
